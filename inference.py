@@ -11,13 +11,17 @@ from src.facerender.animate import AnimateFromCoeff
 from src.generate_batch import get_data
 from src.generate_facerender_batch import get_facerender_data
 from src.utils.init_path import init_path
+import redis
 
 def main(args):
     #torch.backends.cudnn.enabled = False
 
+    r = redis.Redis(host='localhost', port=6379, db=0)
+    
     pic_path = args.source_image
     audio_path = args.driven_audio
-    save_dir = os.path.join(args.result_dir, strftime("%Y_%m_%d_%H.%M.%S"))
+    jobId = args.jobid
+    save_dir = os.path.join(args.result_dir, jobId)
     os.makedirs(save_dir, exist_ok=True)
     pose_style = args.pose_style
     device = args.device
@@ -42,6 +46,18 @@ def main(args):
     #crop image and extract 3dmm from image
     first_frame_dir = os.path.join(save_dir, 'first_frame_dir')
     os.makedirs(first_frame_dir, exist_ok=True)
+
+    r.set(jobId, 'PENDING')
+    print("-----------------Job started:" + jobId)
+    currentPendingCount = r.get('pending-tasks')
+    if currentPendingCount is None:
+        currentPendingCount = 0
+    else:
+        currentPendingCount = int(currentPendingCount)
+    if currentPendingCount == -1 :
+        currentPendingCount = 0
+    r.set('pending-tasks',str(int(currentPendingCount) + 1))
+
     print('3DMM Extraction for source image')
     first_coeff_path, crop_pic_path, crop_info =  preprocess_model.generate(pic_path, first_frame_dir, args.preprocess,\
                                                                              source_image_flag=True, pic_size=args.size)
@@ -90,6 +106,10 @@ def main(args):
     shutil.move(result, save_dir+'.mp4')
     print('The generated video is named:', save_dir+'.mp4')
 
+    r.set(jobId, 'DONE')
+    r.set('pending-tasks',str(int(currentPendingCount) - 1))
+    print("-----------------Job completed:" + jobId)
+
     if not args.verbose:
         shutil.rmtree(save_dir)
 
@@ -98,6 +118,7 @@ if __name__ == '__main__':
 
     parser = ArgumentParser()  
     parser.add_argument("--driven_audio", default='./examples/driven_audio/bus_chinese.wav', help="path to driven audio")
+    parser.add_argument("--jobid", default='1234', help="jobid to track status")
     parser.add_argument("--source_image", default='./examples/source_image/full_body_1.png', help="path to source image")
     parser.add_argument("--ref_eyeblink", default=None, help="path to reference video providing eye blinking")
     parser.add_argument("--ref_pose", default=None, help="path to reference video providing pose")
